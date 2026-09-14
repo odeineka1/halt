@@ -16,12 +16,14 @@ bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16,
 
 cap = cv2.VideoCapture(0) 
 start_time = cv2.getTickCount() 
-countdown_time = 70   
+countdown_time = 60   # round length in seconds before "time's up" ends the game for everyone
 elapsed_time = 0 
-player1_game_over = False # If there are more than two players, an instantiation/spawning algorithm 
-player2_game_over = False # must be implemented for when a player enters the camera viewport. 
+player1_game_over = False # If there are more than two players, an instantiation/spawning algorithm must be implemented for when a player enters the camera viewport 
+player2_game_over = False 
 is_player1_dead = False
 is_player2_dead = False
+
+# 0 = still alive (no red-light motion caught yet), 1 = eliminated
 motiond1 = 0 
 motiond2 = 0
 end = 0 
@@ -32,6 +34,8 @@ circle_color2 = (0, 255, 0)  # Green color
 circle_color3 = (128, 128, 128) 
 circle_radius = 35
 circle_thickness = 2
+# Positions of the three traffic-light circles (top-center of frame, stacked vertically).
+# circle_center2 = top light, circle_center3 = middle light, circle_center1 = bottom light
 circle_center1 = (640, 225)
 circle_center3 = (640, 150)
 circle_center2 = (640, 75)
@@ -43,6 +47,19 @@ rectangle_sp2 = (680, 275)
 last_color_change_time = time.time()
 
 def detect_person(x1, y1, x2, y2, frame_width):
+    """Assign a detected bounding box to Player 1 (left half) or Player 2 (right half).
+
+    Args:
+        x1, y1, x2, y2: pixel coordinates of the detection's bounding box
+            (top-left and bottom-right corners).
+        frame_width: width of the video frame in pixels, used to find the
+            left/right dividing line down the middle of the screen.
+
+    Returns:
+        int: 1 if the box belongs to the left-side player, 2 if it belongs
+        to the right-side player. If the box straddles the midline, the
+        player whose side contains the larger portion of the box is chosen.
+    """
     mid_x = frame_width // 2
     if x2 <= mid_x:
         return 1 
@@ -53,52 +70,14 @@ def detect_person(x1, y1, x2, y2, frame_width):
         right_area = (x2 - mid_x) * (y2 - y1)
         return 1 if left_area >= right_area else 2
 
-# def rounded_rectangle(src, top_left, bottom_right, radius=1, color=255, thickness=1, line_type=cv2.LINE_AA):
-#     p1 = top_left
-#     p2 = (bottom_right[1], top_left[1])
-#     p3 = (bottom_right[1], bottom_right[0])
-#     p4 = (top_left[0], bottom_right[0])
+def play_sound(sound_file):
+    """Play an audio file once, from the start, using pygame's music mixer.
 
-#     height = abs(bottom_right[0] - top_left[1])
-
-#     if radius > 1:
-#         radius = 1
-
-#     corner_radius = int(radius * (height/2))
-#     if thickness < 0:
-
-#         #big rect
-#         top_left_main_rect = (int(p1[0] + corner_radius), int(p1[1]))
-#         bottom_right_main_rect = (int(p3[0] - corner_radius), int(p3[1]))
-
-#         top_left_rect_left = (p1[0], p1[1] + corner_radius)
-#         bottom_right_rect_left = (p4[0] + corner_radius, p4[1] - corner_radius)
-
-#         top_left_rect_right = (p2[0] - corner_radius, p2[1] + corner_radius)
-#         bottom_right_rect_right = (p3[0], p3[1] - corner_radius)
-
-#         all_rects = [
-#         [top_left_main_rect, bottom_right_main_rect], 
-#         [top_left_rect_left, bottom_right_rect_left], 
-#         [top_left_rect_right, bottom_right_rect_right]]
-
-#         [cv2.rectangle(src, rect[0], rect[1], color, thickness) for rect in all_rects]
-
-#     # draw straight lines
-#     cv2.line(src, (p1[0] + corner_radius, p1[1]), (p2[0] - corner_radius, p2[1]), color, abs(thickness), line_type)
-#     cv2.line(src, (p2[0], p2[1] + corner_radius), (p3[0], p3[1] - corner_radius), color, abs(thickness), line_type)
-#     cv2.line(src, (p3[0] - corner_radius, p4[1]), (p4[0] + corner_radius, p3[1]), color, abs(thickness), line_type)
-#     cv2.line(src, (p4[0], p4[1] - corner_radius), (p1[0], p1[1] + corner_radius), color, abs(thickness), line_type)
-
-#     # draw arcs
-#     cv2.ellipse(src, (p1[0] + corner_radius, p1[1] + corner_radius), (corner_radius, corner_radius), 180.0, 0, 90, color ,thickness, line_type)
-#     cv2.ellipse(src, (p2[0] - corner_radius, p2[1] + corner_radius), (corner_radius, corner_radius), 270.0, 0, 90, color , thickness, line_type)
-#     cv2.ellipse(src, (p3[0] - corner_radius, p3[1] - corner_radius), (corner_radius, corner_radius), 0.0, 0, 90,   color , thickness, line_type)
-#     cv2.ellipse(src, (p4[0] + corner_radius, p4[1] - corner_radius), (corner_radius, corner_radius), 90.0, 0, 90,  color , thickness, line_type)
-
-#     return src
-
-def play_sound(sound_file): 
+    Args:
+        sound_file: path to an audio file (e.g. "ak-47.mp3") to play.
+            Re-initializes the mixer each call, so this is only meant for
+            occasional one-off sound effects, not rapid/overlapping playback.
+    """
     pygame.mixer.init() 
     pygame.mixer.music.load(sound_file) 
     pygame.mixer.music.play() 
@@ -110,7 +89,6 @@ while True:
 
     frame = cv2.resize(frame, (1280, 720)) 
     height_f, width_f = frame.shape[:2]
-
 
     # Detect movements
     results = model(frame, stream=True) 
@@ -130,6 +108,11 @@ while True:
             if cls < len(classNames) and classNames[cls] == 'person': 
                 roi_fg = fg_mask[y1:y2, x1:x2] 
                 motion_value = np.sum(roi_fg) / 255 
+
+                # Threshold tuned empirically for a person standing ~2m from
+                # the camera in a normally lit room; raise it if small
+                # movements (breathing, sway) trigger false eliminations,
+                # lower it if real movement isn't being caught
                 if motion_value > 35000: 
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3) 
                     # motiond = 1 
@@ -137,51 +120,30 @@ while True:
                     if person == 1:
                         if circle_color1 == (0, 0, 255): 
                             motiond1 = 1
-
-                        if motiond1 == 1:
-                            pl1_text = "You Lost!"
-                            coord = (175, 400)
-                            arg1 = 2
-                            arg2 = 4
-                        else:
-                            pl1_text = "Motion Detected"
-                            coord = (20, 400)
-                            arg1 = 1
-                            arg2 = 2
-                        cv2.putText(frame, pl1_text, coord, cv2.FONT_HERSHEY_SIMPLEX, arg1, (0, 0, 255), arg2)
                     elif person == 2:
                         if circle_color1 == (0, 0, 255): # therefore, each player should have their own 'motiond' variable
                             motiond2 = 1
-
-                        if motiond2 == 1:
-                            pl2_text = "You Lost!"
-                            coord = (850, 400)
-                            arg1 = 2
-                            arg2 = 4
-                        else:
-                            pl2_text = "Motion Detected"
-                            coord = (1000, 400)
-                            arg1 = 1
-                            arg2 = 2
-                        cv2.putText(frame, pl2_text, coord, cv2.FONT_HERSHEY_SIMPLEX, arg1, (0, 0, 255), arg2)
                     cv2.putText(frame, str(person) + " person", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2) 
                 else: 
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 3) 
-                    # pl1_text = "Not Detected"
-                    if motiond1 == False:
-                        cv2.putText(frame, "Not Detected", (20, 400), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    else: 
-                        cv2.putText(frame, "You Lost!", coord, cv2.FONT_HERSHEY_SIMPLEX, arg1, (0, 0, 255), arg2)
-
-                    if motiond2 == False:
-                        cv2.putText(frame, "Not Detected", (1050, 400), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    else:
-                        cv2.putText(frame, "You Lost!", coord, cv2.FONT_HERSHEY_SIMPLEX, arg1, (0, 0, 255), arg2)
-                    
                 #cv2.putText(frame, classNames[cls], (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2) 
+
+    # Draw each player's status text exactly once per frame, at its own fixed position, so the two players' text never overlaps
+    if motiond1 == 1:
+        cv2.putText(frame, "You Lost!", (175, 400), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
+    else:
+        cv2.putText(frame, "Not Detected", (20, 400), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+    if motiond2 == 1:
+        cv2.putText(frame, "You Lost!", (850, 400), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
+    else:
+        cv2.putText(frame, "Not Detected", (1050, 400), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
     
     current_time = time.time() 
-    # delay = random.randint(4, 10) 
+
+    # Seconds between light-cycle changes. 4s is the default "hold" time
+    # for green/red; the yellow (transition) light is deliberately much
+    # shorter (1s) to mimic a real traffic light
     delay = 4
     if circle_color3 == (255, 255, 0):
         delay = 1
@@ -197,7 +159,6 @@ while True:
         else: 
             circle_color2 = (0, 255, 0)
             circle_color1 = (128, 128, 128)
-
 
 
     cv2.line(frame, (640, 0), (640, 720), (211, 211, 211), 2)  
@@ -226,10 +187,14 @@ while True:
     # Screen text indicating how many players are left
     cv2.putText(frame, "Players remained: {}".format(players_remained), (20, 675), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-    # Change to Spacebar
     if cv2.waitKey(1) & 0xFF == ord(' '):
-        
-        cv2.putText(frame, "You Won!", (520, 360), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, ), 4)
+        # Shows "You Won!" inside the surviving player's own zone
+        if motiond1 == 0 and motiond2 == 1:
+            cv2.putText(frame, "You Won!", (150, 360), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+        elif motiond2 == 0 and motiond1 == 1:
+            cv2.putText(frame, "You Won!", (900, 360), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
+        else:
+            cv2.putText(frame, "You Won!", (520, 360), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
 
         win_start_time = time.time()
         while time.time() - win_start_time < 2:
@@ -238,16 +203,13 @@ while True:
         end = 1
         break
     
-    # if (player1_game_over == True and is_player1_dead == False) or (player2_game_over == True and is_player2_dead == False):
-    #     if player1_game_over == True:
-    #         is_player1_dead == True
-    #     if player2_game_over == True:
-    #         is_player2_dead == True
-    #     play_sound("gunshot.mp3")
-    #     sound_delay = time.time() 
-
-    if player1_game_over == True:
-        pl1_text = "You Lost!"
+    if (player1_game_over == True and is_player1_dead == False) or (player2_game_over == True and is_player2_dead == False):
+        if player1_game_over == True:
+            is_player1_dead = True
+        if player2_game_over == True:
+            is_player2_dead = True
+        play_sound("gunshot.mp3")
+        sound_delay = time.time() 
 
     if ((player1_game_over == True and player2_game_over == True) or time_is_up == True) and end == 0: 
         cv2.putText(frame, "Game Over", (480, 360), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4) 
