@@ -45,3 +45,13 @@ python main.py
 - Replace the fixed left/right zone split with per-player object tracking (e.g. persistent IDs via a tracker like ByteTrack) to support more than two players.
 - Make the motion threshold adaptive to lighting/camera conditions instead of a fixed constant.
 - Add a start/lobby screen and visual countdown instead of console-only timing.
+
+## Testing
+
+A small test suite (`test_main.py`) covers `detect_person()`, the function
+that assigns a detected bounding box to Player 1 or Player 2. Run it with:
+
+\```bash
+pip install pytest
+pytest test_main.py
+\```
