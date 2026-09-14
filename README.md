@@ -51,7 +51,8 @@ python main.py
 A small test suite (`test_main.py`) covers `detect_person()`, the function
 that assigns a detected bounding box to Player 1 or Player 2. Run it with:
 
-\```bash
+```bash
 python3 -m pip install pytest
-python3 -m pytest test_main.py
-\```
+python3 -m pytest test_main.py 
+```
+
